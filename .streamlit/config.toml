@@ -3,10 +3,13 @@ base="light"
 
 [server]
 headless = true
-port = 8503
+port = 8504
 enableXsrfProtection = false
 enableCORS = false
 maxMessageSize = 400000000  # Увеличиваем лимит (в байтах)
 
 [browser]
 gatherUsageStats = false
+
+[global]
+proxy = http://127.0.0.1:10801
