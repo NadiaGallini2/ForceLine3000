@@ -1,33 +1,104 @@
-# мы решаем кейс
 import os
-import re
 import streamlit as st
 import pandas as pd
-from pandas_profiling import ProfileReport
 import xml.etree.ElementTree as ET
-import requests
-from io import StringIO
-import joblib  # для загрузки модели
+import joblib
+from imblearn.over_sampling import ADASYN
+import emoji
+from nltk.tokenize import word_tokenize, RegexpTokenizer
+from nltk.corpus import stopwords
+from nltk.stem import SnowballStemmer
+import re
+import unicodedata
+import contractions
+from sklearn.base import BaseEstimator, TransformerMixin
+import nltk
+from imblearn.over_sampling import ADASYN
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
 
-# Загрузка модели
-def load_model(model_path):
-    """Загружает модель из файла."""
-    try:
-        model = joblib.load(model_path)
-        return model
-    except Exception as e:
-        st.error(f"Ошибка при загрузке модели: {e}")
-        return None
 
-# Путь к вашей модели
-model_path = r"D:\ForceLine3000\pipeline.pkl"
+# Загрузка необходимых ресурсов NLTK
+nltk.download('stopwords')
+nltk.download('punkt')
 
-# Загружаем модель
-model = load_model(model_path)
+# Класс для выполнения сбалансировки данных с использованием ADASYN
+# class ADASYNTransformer(BaseEstimator, TransformerMixin):
+#     def __init__(self):
+#         self.adasyn = ADASYN()
+
+#     def fit(self, X, y=None):
+#         # Ничего не делаем в fit, так как трансформация происходит в transform
+#         return self
+
+#     def transform(self, X):
+#         if isinstance(X, pd.Series):
+#             print(f"Transforming {len(X)} items...")
+#             return X.apply(self.preprocess_text)
+#         else:
+#             raise ValueError("Input is not a pandas Series")
+
+# Класс для предварительной обработки текста
+
+
+class PreprocessText(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        self.stemmer = SnowballStemmer('russian')
+        self.stop_words = set()
+        try:
+            # Загрузка стоп-слов
+            self.stop_words = set(stopwords.words('russian'))
+            print(f"Stopwords loaded: {len(self.stop_words)} stop words.")
+        except Exception as e:
+            print(f"Error loading stopwords: {e}")
+
+    def emojis_words(self, text):
+        clean_text = emoji.demojize(text, delimiters=(" ", " "))
+        clean_text = clean_text.replace(":", "").replace("_", " ")
+        return clean_text
+
+    def preprocess_text(self, text):
+        if not isinstance(text, str):
+            return ''
+        text = re.sub('<[^<]+?>', '', text)
+        text = re.sub(r'http\S+', '', text)
+        text = self.emojis_words(text)
+        text = text.lower()
+        text = re.sub('\s+', ' ', text)
+        text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8', 'ignore')
+        text = contractions.fix(text)
+        text = re.sub('[^a-zA-Z0-9\s]', '', text)
+
+        tokens = nltk.word_tokenize(text)
+        if hasattr(self, 'stop_words') and self.stop_words:  # Проверка наличия stop_words
+            tokens = [token for token in tokens if token not in self.stop_words]
+        else:
+            print("Warning: Stop words are not initialized correctly.")
+        
+        stem_tokens = [self.stemmer.stem(word) for word in tokens]
+        return ' '.join(stem_tokens)
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        if isinstance(X, pd.Series):
+            print(f"Transforming {len(X)} items...")
+            return X.apply(self.preprocess_text)
+        else:
+            raise ValueError("Input is not a pandas Series")
+
+ #Функция для очистки текста
+def clean_text(text):
+    if not isinstance(text, str):
+        text = str(text)
+    text = re.sub(r'(_x000D_|\r|\n)', ' ', text)
+    return text.strip()
 
 
 # Конфигурация страницы Streamlit
-st.set_page_config(layout="wide", page_title="ЗаявкаПроСила", page_icon="⚡")
+st.set_page_config(layout="wide", page_title="Force Line", page_icon="⚡")
 
 # Загрузка CSS для кастомного стиля
 def load_css(file_path):
@@ -41,12 +112,12 @@ load_css(css_file)
 # Боковая панель навигации
 with st.sidebar:
     st.image("logo.png", use_column_width=True)  # Добавление логотипа
-    st.title("⚡ ЗаявкаПроСила")
-    choice = st.radio("Навигация", ["Загрузка по API", "Загрузка", "Анализ", "Заявка", "Классификация", "Экспорт"])
+    st.title("⚡ Force Line")
+    choice = st.radio("Навигация", ["Загрузка",  "Заявка", "Классификация", "Экспорт"])
     st.info("🤖 Программа для автоматической диспетчеризации заявок на основе сообщений AP, загруженного датасета и электронной почты.")
 
 # Приветствие пользователя
-st.markdown("<h1 style='color: #d51d29;'>Добро пожаловать в ЗаявкаПроСила! ⚡</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='color: #d51d29;'>Добро пожаловать в Force Line! ⚡</h1>", unsafe_allow_html=True)
 st.markdown("👋 Здесь вы можете загружать и анализировать данные заявок, классифицировать их по типам и выделять ключевые параметры.")
 
 # Проверка наличия загруженного набора данных
@@ -54,66 +125,6 @@ if os.path.exists('./dataset.csv'):
     df = pd.read_csv('dataset.csv', index_col=None)
 else:
     df = pd.DataFrame()  # Пустой DataFrame для случаев, если данных еще нет
-
-# Функция для загрузки данных через API
-def fetch_data_from_api(api_url, api_token, params=None):
-    headers = {
-        'Authorization': f'Bearer {api_token}',  # Использование Bearer токена
-        'Content-Type': 'application/json'
-    }
-    
-    try:
-        response = requests.get(api_url, headers=headers, params=params)
-        
-        # Проверка успешности запроса
-        if response.status_code == 200:
-            data = response.json()
-            # Преобразуем данные API в DataFrame (предполагаем, что API возвращает данные в формате JSON)
-            df = pd.json_normalize(data)  # Преобразуем вложенные структуры JSON в таблицу
-            return df
-        else:
-            st.error(f"🚨 Ошибка при загрузке данных с API. Статус код: {response.status_code}")
-            return None
-    except Exception as e:
-        st.error(f"🚨 Произошла ошибка при запросе к API: {e}")
-        return None
-
-# Блок загрузки данных
-if choice == "Загрузка по API":
-    st.title("📥 Загрузка данных через API")
-
-    # Ввод данных для API
-    api_url = st.text_input("Введите URL API",  placeholder="https://example.com/api/data", max_chars=100)  # URL API
-    api_token = st.text_input("Введите ваш API токен", type="password")  # API токен (скрыто)
-
-    if api_url and api_token:
-        # Дополнительные параметры для API запроса, если нужны
-        params = {
-            'param1': 'value1',  # Пример параметров, замените на свои
-            'param2': 'value2'
-        }
-
-        # Кнопка для загрузки данных через API
-        if st.button("Загрузить данные"):
-            df = fetch_data_from_api(api_url, api_token, params)
-            if df is not None:
-                st.write(df)  # Отображаем загруженные данные
-
-                # Кнопка для скачивания файла
-                combined_file_name = 'api_downloaded_data.csv'
-                st.download_button(
-                    label="📥 Скачать данные",
-                    data=df.to_csv(index=False).encode('utf-8'),
-                    file_name=combined_file_name,
-                    mime='text/csv'
-                )
-
-                # Сохраняем в сессию
-                st.session_state.combined_df = df
-            else:
-                st.error("🚨 Не удалось загрузить данные.")
-    else:
-        st.warning("Пожалуйста, введите API URL и токен.")
 
 # Блок загрузки данных
 if choice == "Загрузка":
@@ -162,18 +173,6 @@ if choice == "Загрузка":
             st.session_state.combined_df = combined_df
             
 
-# Анализ данных и отбор признаков
-if choice == "Анализ":
-    st.title("🔍 Анализ данных")
-    if 'combined_df' in st.session_state:
-        df = st.session_state.combined_df
-        st.markdown("### Ключевые параметры заявок")
-        st.write("Анализируем содержание заявок и выделяем ключевые атрибуты, такие как серийный номер и тип оборудования.")
-        profile = ProfileReport(df, minimal=True)
-        st.components.v1.html(profile.to_html(), height=1000, scrolling=True)
-    else:
-        st.warning("⚠️ Сначала загрузите данные.")
-
 # Страница для создания и классификации заявки
 if choice == "Заявка":
     st.title("📑 Создание новой заявки")
@@ -215,7 +214,7 @@ if choice == "Заявка":
 
     # Вывод результата
     if st.button("Классифицировать заявку"):
-        st.write(f"**Результаты классификации**:")
+        st.write(f"**Результаты классификации**: ")
         st.write(f"Тема заявки: {тема}")
         st.write(f"Описание заявки: {описание}")
         st.write(f"Тип оборудования: {тип_оборудования}")
@@ -239,37 +238,49 @@ if choice == "Заявка":
         st.success("Заявка классифицирована успешно!")
 
         # Вывод таблицы с результатами
-        st.write("Текущие данные после добавления заявки:")
+        st.write("Текущие данные после добавления заявки: ")
         st.dataframe(df)
 
-# Классификация заявок
+def get_predict(text):
+    return model.predict(pd.Series([text]))[0] 
+
+# Страница для классификации заявок
 if choice == "Классификация":
     st.title("📌 Классификация заявок")
-    if 'combined_df' in st.session_state:
-        df = st.session_state.combined_df
 
-        # Выделение ключевых параметров из текста заявки
-        def extract_serial_number(text):
-            match = re.search(r'\b[A-Z0-9]{8,}\b', text)
-            return match.group(0) if match else "Не указан"
-
-        # Используем столбец 'Описание' вместо 'Сообщение'
-        if 'Описание' in df.columns:
-            df['Серийный номер'] = df['Описание'].apply(extract_serial_number)
-            df['Тип заявки'] = df['Описание'].apply(lambda x: "Техническая" if "ошибка" in x.lower() else "Общая")
-            df['Тип оборудования'] = df['Описание'].apply(lambda x: "Сервер" if "сервер" in x.lower() else "Рабочая станция")
-
-            st.write("Первые 5 заявок после обработки:")
-            st.write(df.head())
+    # Загружаем модель только при необходимости
+    if 'model' not in st.session_state:
+        model_path = "D:\\ForceLine3000\\catboost_pipeline3.pkl"
+        if os.path.exists(model_path):
+            st.session_state.model = joblib.load(model_path)
+            st.success("Модель успешно загружена!")
         else:
-            st.warning("⚠️ Столбец 'Описание' не найден в данных. Пожалуйста, убедитесь, что файл содержит нужные столбцы.")
+            st.warning("⚠️ Модель не найдена! Проверьте путь к файлу модели.")
+    
+    # Проверяем, если модель загружена
+    if 'model' in st.session_state:
+        model = st.session_state.model
 
+        if 'combined_df' in st.session_state and not st.session_state.combined_df.empty:
+            df = st.session_state.combined_df
+            df['Текст'] = df['Тема']+' '+df['Описание']
+            df['Класс'] = df['Текст'].apply(get_predict)
+            
+            # Преобразуем 'Класс' в строковый тип
+            # df['Класс'] = df['Класс'].astype(str)
+      
+            # Отображение предсказанных классов
+            st.write("Результаты классификации заявок: ")
+            
+            st.dataframe(df[['Текст', 'Описание', 'Класс']])
+        else:
+            st.warning("⚠️ Сначала загрузите данные для классификации.")
     else:
-        st.warning("⚠️ Сначала загрузите данные.")
+        st.warning("⚠️ Модель не загружена! Пожалуйста, загрузите модель.")
 
 # Экспорт данных в CSV и XML
 if choice == "Экспорт":
-    st.title("⬇️ Экспорт данных")
+    st.title("💾 Экспорт данных")
     
     # Экспорт в CSV
     if 'combined_df' in st.session_state:
@@ -283,14 +294,9 @@ if choice == "Экспорт":
             root = ET.Element("Data")
             for _, row in df.iterrows():
                 entry = ET.SubElement(root, "Entry")
-                for col_name, col_value in row.items():
-                    col_element = ET.SubElement(entry, col_name)
-                    col_element.text = str(col_value)
-            return ET.tostring(root, encoding="utf-8")
+                for col in df.columns:
+                    ET.SubElement(entry, col).text = str(row[col])
+            return ET.tostring(root, encoding="unicode")
 
         xml_data = to_xml(df)
         st.download_button(label="📂 Скачать данные в формате XML", data=xml_data, file_name="export_data.xml", mime="application/xml")
-
-        st.info("📦 Данные готовы для импорта в 1С в формате CSV и XML.")
-    else:
-        st.warning("⚠️ Сначала загрузите данные.")
